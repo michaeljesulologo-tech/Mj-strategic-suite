@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MJ - Whot Strategy Suite</title>
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+<style>
+  :root { --bg: #163828; --card: #fdfbf7; --ink: #7a1c1c; --gold: #eab308; }
+  * { box-sizing: border-box; font-family: system-ui, sans-serif; user-select: none; }
+  body { margin: 0; background: var(--bg); color: #fff; display: flex; flex-direction: column; height: 100vh; justify-content: space-between; padding: 10px; overflow: hidden; }
+  #splash { position: fixed; inset: 0; background: #0c1f16; color: var(--gold); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 100; transition: opacity 0.35s ease; }
+  #splash .logo { font-size: 72px; font-weight: 900; letter-spacing: 8px; }
+  #splash .loader { width: 100px; height: 4px; background: rgba(255,255,255,0.15); border-radius: 4px; margin-top: 14px; overflow: hidden; }
+  #splash .loader-bar { width: 100%; height: 100%; background: var(--gold); transform-origin: left; animation: fillBar 2s linear forwards; }
+  @keyframes fillBar { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+  .bar { display: flex; flex-wrap: wrap; gap: 6px; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.3); padding: 8px 12px; border-radius: 8px; font-size: 13px; }
+  .controls { display: flex; gap: 6px; align-items: center; }
+  input { width: 85px; padding: 6px; border-radius: 4px; border: none; font-size: 12px; }
+  .hand { display: flex; gap: 8px; overflow-x: auto; padding: 8px 12px; min-height: 115px; align-items: center; }
+  .hand > :first-child { margin-left: auto; }
+  .hand > :last-child { margin-right: auto; }
+  .center { display: flex; justify-content: center; align-items: center; gap: 24px; margin: auto 0; }
+  .card { width: 70px; height: 102px; background: var(--card); color: var(--ink); border-radius: 8px; border: 2px solid #ccc; display: flex; flex-direction: column; justify-content: space-between; padding: 6px; cursor: pointer; box-shadow: 0 4px 8px rgba(0,0,0,0.4); flex-shrink: 0; }
+  .card.back { background: var(--ink); color: #fff; border-color: #fff; align-items: center; justify-content: center; font-weight: bold; text-align: center; }
+  .card .val { font-size: 14px; font-weight: 800; }
+  .card .suit { text-align: center; font-size: 26px; line-height: 1; }
+  #modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); align-items: center; justify-content: center; z-index: 10; }
+  .suit-picker { background: #222; padding: 16px; border-radius: 10px; display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+  button { background: var(--gold); border: none; padding: 6px 10px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<div id="splash">
+  <div class="logo">MJ</div>
+  <div class="loader"><div class="loader-bar"></div></div>
+</div>
+
+<div class="bar">
+  <span id="status">Your Turn</span>
+  <span>Suit: <strong id="active-suit">-</strong></span>
+  <div class="controls">
+    <button onclick="initGame(false)">Vs AI</button>
+    <button onclick="hostGame()">Host</button>
+    <input id="room-input" placeholder="Room ID">
+    <button onclick="joinGame()">Join</button>
+  </div>
+</div>
+
+<div class="hand" id="ai-hand"></div>
+
+<div class="center">
+  <div class="card back" onclick="playerDraw()">MARKET<br><small id="deck-count">0</small></div>
+  <div id="top-card"></div>
+</div>
+
+<div class="hand" id="player-hand"></div>
+
+<div id="modal">
+  <div class="suit-picker">
+    <button onclick="pickSuit('circle')">● Circle</button>
+    <button onclick="pickSuit('triangle')">▲ Triangle</button>
+    <button onclick="pickSuit('cross')">✚ Cross</button>
+    <button onclick="pickSuit('square')">■ Square</button>
+    <button onclick="pickSuit('star')">★ Star</button>
+  </div>
+</div>
+
+<script>
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+function sfx(type) {
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+  osc.connect(gain); gain.connect(audioCtx.destination);
+  const now = audioCtx.currentTime;
+  if (type === 'play') {
+    osc.frequency.setValueAtTime(520, now); osc.frequency.exponentialRampToValueAtTime(240, now + 0.08);
+    gain.gain.setValueAtTime(0.25, now); gain.gain.linearRampToValueAtTime(0.01, now + 0.08);
+    osc.start(now); osc.stop(now + 0.08);
+  } else if (type === 'draw') {
+    osc.frequency.setValueAtTime(260, now); osc.frequency.exponentialRampToValueAtTime(480, now + 0.1);
+    gain.gain.setValueAtTime(0.2, now); gain.gain.linearRampToValueAtTime(0.01, now + 0.1);
+    osc.start(now); osc.stop(now + 0.1);
+  } else if (type === 'action') {
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(440, now); osc.frequency.setValueAtTime(660, now + 0.08);
+    gain.gain.setValueAtTime(0.3, now); gain.gain.linearRampToValueAtTime(0.01, now + 0.22);
+    osc.start(now); osc.stop(now + 0.22);
+  } else if (type === 'error') {
+    osc.type = 'sawtooth'; osc.frequency.setValueAtTime(130, now);
+    gain.gain.setValueAtTime(0.2, now); gain.gain.linearRampToValueAtTime(0.01, now + 0.15);
+    osc.start(now); osc.stop(now + 0.15);
+  } else if (type === 'win') {
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(523, now); osc.frequency.setValueAtTime(659, now + 0.1); osc.frequency.setValueAtTime(784, now + 0.2);
+    gain.gain.setValueAtTime(0.3, now); gain.gain.linearRampToValueAtTime(0.01, now + 0.4);
+    osc.start(now); osc.stop(now + 0.4);
+  }
+}
+
+const SUITS = {
+  circle: { sym: '●', vals: [1,2,3,4,5,7,8,10,11,12,13,14] },
+  triangle: { sym: '▲', vals: [1,2,3,4,5,7,8,10,11,12,13,14] },
+  cross: { sym: '✚', vals: [1,2,3,5,7,10,11,13,14] },
+  square: { sym: '■', vals: [1,2,3,5,7,10,11,13,14] },
+  star: { sym: '★', vals: [1,2,3,4,5,7,8] }
+};
+
+let deck = [], player = [], oppCount = 6, ai = [], topCard = null, activeSuit = '', turn = 'player', pendingPick = 0;
+let peer = null, conn = null, isOnline = false;
+
+window.addEventListener('DOMContentLoaded', () => {
+  setTimeout(() => {
+    const splash = document.getElementById('splash');
+    splash.style.opacity = '0';
+    setTimeout(() => splash.style.display = 'none', 350);
+  }, 2000);
+});
+
+function initGame(online = false) {
+  isOnline = online; deck = [];
+  for (const [s, data] of Object.entries(SUITS)) data.vals.forEach(v => deck.push({ suit: s, value: v }));
+  for (let i = 0; i < 5; i++) deck.push({ suit: 'whot', value: 20 });
+  deck.sort(() => Math.random() - 0.5);
+  player = deck.splice(0, 6); ai = deck.splice(0, 6); oppCount = 6;
+  do { topCard = deck.pop(); } while (topCard.value === 20);
+  activeSuit = topCard.suit; turn = 'player'; pendingPick = 0;
+  setStatus(online ? "Online Match! Your Turn" : "Vs AI: Your Turn");
+  render();
+}
+
+function hostGame() {
+  const code = 'whot-' + Math.random().toString(36).substring(2, 6);
+  peer = new Peer(code);
+  peer.on('open', id => setStatus("Room ID: " + id.replace('whot-','')));
+  peer.on('connection', c => {
+    conn = c; setupConn(); initGame(true);
+    conn.on('open', () => syncState('opp', 'Your Turn', true));
+  });
+}
+
+function joinGame() {
+  const code = document.getElementById('room-input').value.trim().toLowerCase();
+  if (!code) return;
+  peer = new Peer();
+  peer.on('open', () => { conn = peer.connect('whot-' + code); setupConn(); });
+}
+
+function setupConn() {
+  isOnline = true;
+  conn.on('data', d => {
+    deck = d.deck; if (d.initHand) player = d.initHand;
+    topCard = d.topCard; activeSuit = d.activeSuit; pendingPick = d.pendingPick;
+    oppCount = d.oppCount; turn = d.nextTurn; setStatus(d.msg); sfx('play'); render();
+  });
+}
+
+function syncState(nextTurn, msg = "Your Turn", includeInit = false) {
+  if (!isOnline || !conn) return;
+  conn.send({
+    deck, topCard, activeSuit, pendingPick, oppCount: player.length,
+    nextTurn: nextTurn === 'opp' ? 'player' : 'opp', initHand: includeInit ? ai : null, msg
+  });
+}
+
+function draw(target, count = 1) {
+  for (let i = 0; i < count; i++) if (deck.length) target.push(deck.pop());
+  sfx('draw');
+}
+
+function isValid(c) {
+  if (pendingPick > 0) return c.value === topCard.value;
+  return c.value === 20 || c.suit === activeSuit || c.value === topCard.value;
+}
+
+function renderCard(c) {
+  const sym = c.suit === 'whot' ? 'W' : SUITS[c.suit].sym;
+  return `<div class="card"><div class="val">${c.value}</div><div class="suit">${sym}</div><div class="val" style="align-self:flex-end">${c.value}</div></div>`;
+}
+
+function render() {
+  document.getElementById('deck-count').textContent = deck.length;
+  document.getElementById('active-suit').textContent = activeSuit.toUpperCase();
+  document.getElementById('top-card').innerHTML = renderCard(topCard);
+  const count = isOnline ? oppCount : ai.length;
+  document.getElementById('ai-hand').innerHTML = Array(count).fill('<div class="card back">WHOT</div>').join('');
+  document.getElementById('player-hand').innerHTML = player.map((c, i) => `<div onclick="playCard(${i})">${renderCard(c)}</div>`).join('');
+}
+
+function setStatus(msg) { document.getElementById('status').textContent = msg; }
+
+function playCard(idx) {
+  if (turn !== 'player') return;
+  const c = player[idx];
+  if (!isValid(c)) { sfx('error'); return setStatus("Invalid move!"); }
+  player.splice(idx, 1);
+  resolveCard(c, 'player');
+}
+
+function playerDraw() {
+  if (turn !== 'player') return;
+  const count = pendingPick || 1;
+  draw(player, count); pendingPick = 0; turn = isOnline ? 'opp' : 'ai'; render();
+  if (isOnline) { setStatus("Waiting..."); syncState('opp', `Opponent drew ${count}. Your Turn!`); }
+  else { setStatus(`You drew ${count}. AI thinking...`); setTimeout(aiTurn, 700); }
+}
+
+function pickSuit(s) {
+  activeSuit = s; sfx('action');
+  document.getElementById('modal').style.display = 'none';
+  turn = isOnline ? 'opp' : 'ai'; render();
+  if (isOnline) { setStatus("Waiting..."); syncState('opp', `Suit is ${s.toUpperCase()}. Your Turn!`); }
+  else setTimeout(aiTurn, 700);
+}
+
+function resolveCard(c, who) {
+  topCard = c;
+  if (c.suit !== 'whot') activeSuit = c.suit;
+  const isSpecial = [1, 2, 5, 8, 14, 20].includes(c.value);
+  sfx(isSpecial ? 'action' : 'play');
+  render();
+
+  if (!player.length || (!isOnline && !ai.length)) {
+    sfx('win');
+    setStatus(player.length === 0 ? "You Win!" : "Opponent Wins!");
+    if (isOnline) syncState('end', "Opponent Wins!");
+    turn = 'end'; return;
+  }
+
+  if (c.value === 20 && who === 'player') {
+    document.getElementById('modal').style.display = 'flex'; return;
+  }
+
+  let keepTurn = (c.value === 1 || c.value === 8 || c.value === 14);
+  if (c.value === 14 && !isOnline) draw(who === 'player' ? ai : player, 1);
+  if (c.value === 2 || c.value === 5) pendingPick += (c.value === 2 ? 2 : 3);
+
+  if (isOnline) {
+    turn = keepTurn ? 'player' : 'opp';
+    setStatus(keepTurn ? "Play again!" : "Waiting...");
+    syncState(turn, keepTurn ? "Opponent played action card!" : "Your Turn!");
+  } else {
+    turn = keepTurn ? who : (who === 'player' ? 'ai' : 'player');
+    render();
+    if (turn === 'ai') setTimeout(aiTurn, 700);
+  }
+}
+
+function aiTurn() {
+  if (turn !== 'ai' || isOnline) return;
+  const valid = ai.map((c, i) => isValid(c) ? i : -1).filter(i => i !== -1);
+  if (!valid.length) {
+    draw(ai, pendingPick || 1); pendingPick = 0; turn = 'player';
+    setStatus("AI drew. Your Turn."); render(); return;
+  }
+  const card = ai.splice(valid[0], 1)[0];
+  if (card.value === 20) activeSuit = 'circle';
+  resolveCard(card, 'ai');
+}
+
+initGame(false);
+</script>
+</body>
+</html>
